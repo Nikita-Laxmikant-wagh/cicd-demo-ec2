@@ -1,25 +1,37 @@
 import os
 import json
 import paramiko
+import time
 
+# -----------------------------
 # Read configuration
+# -----------------------------
 with open("config.json", "r") as f:
     config = json.load(f)
 
 remote_path = config["remote_path"]
 
-# Read GitHub Secrets
+
+# -----------------------------
+# GitHub Secrets
+# -----------------------------
 host = os.environ["EC2_HOST"]
 username = os.environ["EC2_USER"]
 pem_data = os.environ["EC2_PEM"]
 
-# Create key.pem from GitHub Secret
+
+# -----------------------------
+# Create PEM file
+# -----------------------------
 with open("key.pem", "w") as f:
     f.write(pem_data)
 
 os.chmod("key.pem", 0o400)
 
-# Connect to EC2
+
+# -----------------------------
+# Connect EC2
+# -----------------------------
 ssh = paramiko.SSHClient()
 ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
@@ -29,9 +41,12 @@ ssh.connect(
     key_filename="key.pem"
 )
 
-print("Connected to EC2")
+print("✅ Connected to EC2")
 
+
+# -----------------------------
 # Upload files
+# -----------------------------
 sftp = ssh.open_sftp()
 
 files = [
@@ -40,25 +55,72 @@ files = [
 ]
 
 for file in files:
-    sftp.put(file, f"{remote_path}/{file}")
-    print(f"Uploaded: {file}")
+    local_file = file
+    remote_file = f"{remote_path}/{file}"
+
+    sftp.put(local_file, remote_file)
+
+    print(f"✅ Uploaded {file}")
+
 
 sftp.close()
 
-# Install packages and restart Flask
+
+# -----------------------------
+# Deployment commands
+# -----------------------------
 commands = f"""
 cd {remote_path}
+
+echo "🚀 Starting deployment"
+
+# Activate virtual environment
 source venv/bin/activate
+
+
+# Install requirements
 pip install -r requirements.txt
-pkill -f app.py || true
+
+
+# Stop old Flask application
+pkill -f "python3 app.py" || true
+
+
+# Wait for process to stop
+sleep 3
+
+
+# Start Flask application
 nohup python3 app.py > output.log 2>&1 &
+
+
+# Wait for startup
+sleep 5
+
+
+echo "--------- PROCESS ---------"
+ps -ef | grep app.py
+
+
+echo "--------- LOGS ---------"
+cat output.log
+
 """
+
 
 stdin, stdout, stderr = ssh.exec_command(commands)
 
+
+print("\n========== SERVER OUTPUT ==========")
+
 print(stdout.read().decode())
+
+
+print("\n========== SERVER ERRORS ==========")
+
 print(stderr.read().decode())
+
 
 ssh.close()
 
-print("Deployment Successful!")
+print("\n🎉 Deployment Successful!")
